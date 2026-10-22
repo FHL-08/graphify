@@ -2218,6 +2218,11 @@ def _build_http_app(
         security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
     else:
         allowed = {host, "localhost", "127.0.0.1"}
+        allowed |= {
+            value.strip()
+            for value in os.environ.get("GRAPHIFY_EXTRA_ALLOWED_HOSTS", "").split(",")
+            if value.strip()
+        }
         allowed |= {f"{h}:{port}" for h in list(allowed)}
         security = TransportSecuritySettings(allowed_hosts=sorted(allowed))
 

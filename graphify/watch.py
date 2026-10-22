@@ -1883,13 +1883,32 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
     try:
         from watchdog.observers import Observer
         from watchdog.observers.polling import PollingObserver
-        from watchdog.events import FileSystemEventHandler
+        from watchdog.events import (
+            EVENT_TYPE_CREATED,
+            EVENT_TYPE_DELETED,
+            EVENT_TYPE_MODIFIED,
+            EVENT_TYPE_MOVED,
+            FileSystemEventHandler,
+        )
     except ImportError as e:
         raise ImportError("watchdog not installed. Run: pip install watchdog") from e
 
     last_trigger: float = 0.0
     pending: bool = False
     changed: set[Path] = set()
+
+    # Only real mutations may trigger a rebuild. watchdog >= 6 also emits
+    # read-only events (EVENT_TYPE_OPENED / EVENT_TYPE_CLOSED_NO_WRITE), and
+    # our own rebuild scan opens every source file it parses — so reacting to
+    # those made the watcher retrigger itself forever, pinning a core and
+    # never landing a graph. Allowlist (not denylist) so a future watchdog
+    # event type cannot silently reintroduce the loop.
+    trigger_event_types = frozenset({
+        EVENT_TYPE_CREATED,
+        EVENT_TYPE_DELETED,
+        EVENT_TYPE_MODIFIED,
+        EVENT_TYPE_MOVED,
+    })
 
     # Load .graphifyignore patterns ONCE at startup so the handler does not
     # re-parse the file on every filesystem event. Watchdog's handler runs on
@@ -1906,6 +1925,8 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
     class Handler(FileSystemEventHandler):
         def on_any_event(self, event):
             nonlocal last_trigger, pending
+            if event.event_type not in trigger_event_types:
+                return
             if event.is_directory:
                 return
             path = Path(os.fsdecode(event.src_path))
